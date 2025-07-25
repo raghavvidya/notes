@@ -1,0 +1,41 @@
+---
+# Create required directory
+- name: Create dd-agent required directory
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: dd-agent
+    group: dd-agent
+    mode: '0755'
+  loop:
+    - /var/run/dd-agent
+    - /etc/datadog-agent/conf.d/reboot_required.d
+  become: yes
+
+# Deploy configuration
+- name: Configure reboot_required integration
+  template:
+    src: reboot_required.d/conf.yaml.j2
+    dest: /etc/datadog-agent/conf.d/reboot_required.d/conf.yaml
+    owner: dd-agent
+    group: dd-agent
+    mode: '0644'
+  become: yes
+  notify: restart datadog-agent
+
+# Check if reboot_required integration installed
+- name: Check if reboot_required integration exists
+  shell: datadog-agent integration show datadog-reboot_required
+  register: integration_check
+  become: true
+  failed_when: false
+  changed_when: false
+
+
+# Install reboot_required integration
+- name: Install Datadog reboot_required integration
+  shell: |
+     datadog-agent integration install -t datadog-reboot_required=={{ datadog_reboot_required_version | default(1.0.0) }} --allow-root
+  become: true
+  when: integration_check.rc != 0
+  notify: restart datadog-agent

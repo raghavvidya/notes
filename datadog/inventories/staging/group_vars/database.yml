@@ -1,0 +1,5 @@
+bi_environment: dev
+datadog_reboot_required_version: 1.0.0
+reboot_monitoring:
+  warning_days: 10
+  critical_days: 15

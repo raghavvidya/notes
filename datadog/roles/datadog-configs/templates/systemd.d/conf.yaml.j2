@@ -1,0 +1,29 @@
+init_config: {}
+
+instances:
+  - unit_names:
+      - docker.service
+      - consul-template.service
+      - ssh.service
+      - datadog-agent.service
+
+    # Custom mapping for service substates
+    substate_status_mapping:
+       docker.service:
+          running: ok
+          exited: critical
+       consul-template.service:
+          running: ok
+          exited: critical
+       ssh.service:
+          running: ok
+          exited: critical
+       datadog-agent.service:
+          running: ok
+          exited: critical
+
+    tags:
+      - env:{{ bi_environment }}
+      - service:postgres-cluster
+      - component:systemd
+      - host_type:postgres-node

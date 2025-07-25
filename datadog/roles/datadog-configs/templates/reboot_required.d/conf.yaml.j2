@@ -1,0 +1,11 @@
+init_config: {}
+
+instances:
+  - reboot_signal_file: "/var/run/reboot-required"
+    created_at_file: "/var/run/dd-agent/reboot-required.created_at"
+    days_warning: "{{ reboot_monitoring.warning_days | default(7) }}"
+    days_critical: "{{ reboot_monitoring.critical_days | default(14) }}"
+    tags:
+    - "env:{{bi_environment }}"
+    - "service:postgres-cluster"
+    

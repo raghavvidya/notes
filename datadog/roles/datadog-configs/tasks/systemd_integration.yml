@@ -1,0 +1,9 @@
+- name: Configure systemd monitoring
+  template:
+    src: systemd.d/conf.yaml.j2
+    dest: /etc/datadog-agent/conf.d/systemd.d/conf.yaml
+    owner: dd-agent
+    group: dd-agent
+    mode: '0644'
+  become: yes
+  notify: restart datadog-agent

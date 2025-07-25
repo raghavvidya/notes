@@ -1,0 +1,7 @@
+# Verify reboot required integration
+- name: Validate reboot_required integration
+  shell: datadog-agent integration show datadog-reboot_required
+  register: integration_status
+  become: yes
+  failed_when: "'Installed version' not in integration_status.stdout"
+  tags: validation

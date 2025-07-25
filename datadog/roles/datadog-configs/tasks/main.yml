@@ -1,0 +1,8 @@
+---
+- name: Additional datadog configuration
+  include_tasks: install_reboot_required.yml
+- name: Validate reboot_required integration
+  include_tasks: validate_reboot_required.yml
+  tags: validation
+- name: Adding Systemd monitoring 
+  include_tasks: systemd_integration.yml
