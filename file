@@ -1,0 +1,61 @@
+from datadog_checks.base import AgentCheck
+import subprocess
+import re
+
+class ZFSCheck(AgentCheck):
+    STATE_MAP = {
+        "ONLINE": 0,
+        "DEGRADED": 1,
+        "FAULTED": 2,
+        "OFFLINE": 3,
+        "REMOVED": 4,
+        "UNAVAIL": 5,
+    }
+
+    def check(self, instance):
+        try:
+            # Pool usage metrics
+            zpool_list = subprocess.check_output(["/sbin/zpool", "list", "-Hp"]).decode("utf-8")
+            for line in zpool_list.strip().split("\n"):
+                fields = line.split("\t")
+                pool = fields[0]
+                size = int(fields[1])
+                alloc = int(fields[2])
+                free = int(fields[3])
+
+                self.gauge("zfs.pool.size", size, tags=[f"pool:{pool}"])
+                self.gauge("zfs.pool.allocated", alloc, tags=[f"pool:{pool}"])
+                self.gauge("zfs.pool.free", free, tags=[f"pool:{pool}"])
+
+            # Pool health and errors
+            zpool_status = subprocess.check_output(["/sbin/zpool", "status"]).decode("utf-8")
+            pools = re.split(r'\n\n', zpool_status.strip())  # Split by double newlines
+
+            for pool_section in pools:
+                match = re.search(r'pool:\s+(\S+)', pool_section)
+                if not match:
+                    continue
+                pool_name = match.group(1)
+
+                # Pool state
+                state_match = re.search(r'state:\s+(\S+)', pool_section)
+                state = state_match.group(1) if state_match else "UNKNOWN"
+                state_value = self.STATE_MAP.get(state.upper(), 99)
+                self.gauge("zfs.pool.health.status_code", state_value, tags=[f"pool:{pool_name}", f"state:{state}"])
+
+                if state == "ONLINE":
+                    self.service_check("zfs.pool.health", self.OK, tags=[f"pool:{pool_name}"])
+                elif state == "DEGRADED":
+                    self.service_check("zfs.pool.health", self.WARNING, tags=[f"pool:{pool_name}"])
+                else:
+                    self.service_check("zfs.pool.health", self.CRITICAL, tags=[f"pool:{pool_name}"])
+
+                # Device-level errors
+                device_lines = re.findall(r'\n\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', pool_section)
+                for device, state, read, write in device_lines:
+                    self.gauge("zfs.device.read_errors", int(read), tags=[f"pool:{pool_name}", f"device:{device}"])
+                    self.gauge("zfs.device.write_errors", int(write), tags=[f"pool:{pool_name}", f"device:{device}"])
+
+        except Exception as e:
+            self.service_check("zfs.pool.health", self.CRITICAL)
+            self.log.error("ZFS check failed: {}".format(e))
