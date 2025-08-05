@@ -1,27 +1,41 @@
-JIRA Ticket: Integrate Patroni Metrics with Datadog Monitoring
-Background
-Patroni is responsible for managing PostgreSQL high availability within our environment. Monitoring its state is critical for ensuring database uptime, replication consistency, failover readiness, and operational health. Patroni exposes a `/metrics` endpoint in Prometheus format, which we want to ingest into Datadog for centralized monitoring, alerting, and observability.
-Key Integration Features
-- Ingest Prometheus-formatted metrics exposed by Patroni into Datadog using the Datadog Agent.
-- Monitor node roles (leader/replica), PostgreSQL state, xlog metrics, and failover control flags.
-- Tag metrics with contextual labels (`scope`, `name`, etc.) for filtering and dashboard segmentation.
-- Enable real-time alerting for issues such as:
-  - PostgreSQL down   - Patroni failover paused   - Required restart   - No active leader
-- Dashboard for live visualization of Patroni and PostgreSQL cluster health.
-Configuration Requirements
-- Ensure the Patroni metrics endpoint (`/metrics`) is accessible on each node (usually `http://localhost:8008/metrics`).
-- Datadog Agent must have Prometheus OpenMetrics support enabled.
-- Add a custom configuration under the Agent’s `prometheus.d` integration to scrape Patroni metrics.
-- Metrics must be scoped and tagged by node and cluster for filtering.
-- Datadog API key and integration should already be present on all database nodes.
-Acceptance Criteria
-- [ ] Patroni metrics are successfully ingested and visible in Datadog Metrics Explorer.
-- [ ] Metrics are tagged with `scope` and `name` for each Patroni node.
-- [ ] Dashboards and monitors are set up to reflect Patroni state and PostgreSQL availability.
-- [ ] Alerts are triggered on key failure conditions (e.g., Postgres down, no leader, pending restart).
-- [ ] Example configuration is documented and applied across all Patroni nodes.
-Example Configuration
-File: /etc/datadog-agent/conf.d/prometheus.d/conf.yaml
-instances:   - prometheus_url: http://localhost:8008/metrics     namespace: patroni     metrics:       - patroni_version       - patroni_postgres_running       - patroni_postmaster_start_time       - patroni_primary       - patroni_xlog_location       - patroni_standby_leader       - patroni_replica       - patroni_sync_standby       - patroni_quorum_standby       - patroni_xlog_received_location       - patroni_xlog_replayed_location       - patroni_xlog_replayed_timestamp       - patroni_xlog_paused       - patroni_postgres_streaming       - patroni_postgres_in_archive_recovery       - patroni_postgres_server_version       - patroni_cluster_unlocked       - patroni_postgres_timeline       - patroni_dcs_last_seen       - patroni_pending_restart       - patroni_is_paused     tags:       - cluster:batman
-Agent Restart Command:
-sudo systemctl restart datadog-agent
+
+Background:
+Our infrastructure uses ZFS for storage, but there's currently no integration with Datadog for visibility into ZFS pool health, device-level errors, or usage statistics. Lack of monitoring could lead to silent degradation or failures.
+
+This task sets up a custom Datadog Agent check to monitor ZFS health, capacity, and error rates using a Python script.
+
+Acceptance Criteria:
+- [ ] Deploy custom check script to Datadog agent host(s)
+- [ ] Monitor:
+  - Pool state (ONLINE, DEGRADED, etc.)
+  - Capacity: allocated, free, and total
+  - Device read/write errors
+- [ ] Define service checks:
+  - zfs.pool.health with OK/WARNING/CRITICAL based on state
+- [ ] Define metrics:
+  - zfs.pool.size, zfs.pool.allocated, zfs.pool.free
+  - zfs.device.read_errors, zfs.device.write_errors
+  - zfs.pool.health.status_code
+- [ ] Add meaningful tags: pool:<name>, device:<name>
+- [ ] Validate data in Datadog Metrics Explorer and Service Checks
+
+Example Configuration:
+
+zfs_check.py:
+(Use the full script provided in the ticket)
+
+zfs_check.yaml:
+init_config:
+
+instances:
+  - name: zfs_monitor
+    tags:
+      - env:prod
+    min_collection_interval: 60
+
+Monitoring Alerts:
+| Condition                                | Datadog Monitor Type | Severity   |
+|------------------------------------------|------------------------|------------|
+| Pool state != ONLINE                     | Service Check          | Critical   |
+| Pool usage exceeds 85%                   | Metric Threshold       | Warning    |
+| Device read/write errors > 0             | Metric Threshold       | Warning    |
