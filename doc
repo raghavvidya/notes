@@ -1,41 +1,47 @@
+JIRA Ticket: Integrate Patroni Metrics with Datadog Monitoring
 
 Background:
-Our infrastructure uses ZFS for storage, but there's currently no integration with Datadog for visibility into ZFS pool health, device-level errors, or usage statistics. Lack of monitoring could lead to silent degradation or failures.
+Patroni manages PostgreSQL high availability within our infrastructure. Monitoring Patroni is essential to ensure database uptime, replication consistency, failover readiness, and operational health. Patroni exposes a `/metrics` endpoint in Prometheus format. To improve observability, we are ingesting these metrics into Datadog using container autodiscovery based on Docker labels, simplifying configuration and ensuring all relevant metrics are captured.
 
-This task sets up a custom Datadog Agent check to monitor ZFS health, capacity, and error rates using a Python script.
+Key Integration Features:
+- Automatically discover Patroni containers and scrape their Prometheus-formatted metrics using Docker label-based autodiscovery.
+- Monitor critical operational indicators including:
+  - Node roles (leader/replica)
+  - PostgreSQL running state
+  - WAL/XLOG metrics
+  - Failover and pause indicators
+- Enable real-time alerting for:
+  - PostgreSQL process down
+  - Patroni failover paused
+  - Required restart
+  - No active leader
+- Tag metrics by namespace and cluster for filtering and alerting.
+
+Configuration Requirements:
+- Ensure the Patroni metrics endpoint is exposed inside the container (e.g., http://localhost:8009/metrics).
+- The Datadog Agent must be running with Docker label autodiscovery enabled.
+- Add Docker labels to Patroni containers for automatic metric collection.
+- Use `openmetrics` endpoint autodiscovery with wildcard (.*) metric matching.
+- Apply appropriate tags (e.g., cluster) via labels to organize metrics in Datadog.
+
+Docker Label Configuration Example:
+com.datadoghq.ad.instances: >
+  [
+    {
+      "openmetrics_endpoint": "http://%%host%%:8009/metrics",
+      "namespace": "patroni",
+      "metrics": [".*"]
+    }
+  ]
+com.datadoghq.ad.check_names: ["openmetrics"]
+com.datadoghq.tags: ["cluster:batman"]
+
+Note:
+Replace port 8009 with the actual exposed Patroni metrics port if different.
 
 Acceptance Criteria:
-- [ ] Deploy custom check script to Datadog agent host(s)
-- [ ] Monitor:
-  - Pool state (ONLINE, DEGRADED, etc.)
-  - Capacity: allocated, free, and total
-  - Device read/write errors
-- [ ] Define service checks:
-  - zfs.pool.health with OK/WARNING/CRITICAL based on state
-- [ ] Define metrics:
-  - zfs.pool.size, zfs.pool.allocated, zfs.pool.free
-  - zfs.device.read_errors, zfs.device.write_errors
-  - zfs.pool.health.status_code
-- [ ] Add meaningful tags: pool:<name>, device:<name>
-- [ ] Validate data in Datadog Metrics Explorer and Service Checks
-
-Example Configuration:
-
-zfs_check.py:
-(Use the full script provided in the ticket)
-
-zfs_check.yaml:
-init_config:
-
-instances:
-  - name: zfs_monitor
-    tags:
-      - env:prod
-    min_collection_interval: 60
-
-Monitoring Alerts:
-| Condition                                | Datadog Monitor Type | Severity   |
-|------------------------------------------|------------------------|------------|
-| Pool state != ONLINE                     | Service Check          | Critical   |
-| Pool usage exceeds 85%                   | Metric Threshold       | Warning    |
-| Device read/write errors > 0             | Metric Threshold       | Warning    |
+- [ ] Patroni metrics are successfully autodiscovered and ingested into Datadog via Docker labels.
+- [ ] Metrics are visible in Datadog Metrics Explorer with correct tagging (`namespace`, `cluster`, etc.).
+- [ ] Alerts are triggered for key conditions (e.g., Postgres down, no leader, pending restart).
+- [ ] Example label configuration is applied to all Patroni containers.
+- [ ] No manual config required on Datadog Agent for new Patroni containers.
