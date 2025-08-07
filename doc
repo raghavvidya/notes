@@ -1,78 +1,42 @@
+from datadog_checks.base import AgentCheck
+import subprocess
+import re
 
-Jira Ticket:
+class SmartCheck(AgentCheck):
+    def check(self, instance):
+        devices = ["/dev/sd" + chr(letter) for letter in range(ord('a'), ord('z')+1)]
 
-Title:  
-Integrate ZFS Monitoring with Datadog + Add Rasdaemon and Smartd Monitoring via Ansible Role
+        for device in devices:
+            try:
+                output = subprocess.check_output(["smartctl", "-A", "-H", device], universal_newlines=True)
+                model_info = subprocess.check_output(["smartctl", "-i", device], universal_newlines=True)
 
-Background:  
-Our infrastructure uses ZFS for storage, but currently, there is no integration with Datadog for monitoring ZFS pool health, device errors, or usage statistics. This lack of monitoring could lead to silent degradation or failures that go unnoticed.
+                model = re.search(r"Device Model:\s+(.*)", model_info)
+                serial = re.search(r"Serial Number:\s+(.*)", model_info)
 
-We want to set up a custom Datadog Agent check to monitor ZFS health, capacity, and error rates using a Python script. Additionally, incorporate hardware monitoring with Rasdaemon and disk health monitoring with Smart Disk Monitoring Daemon (smartd), all deployed and configured via Ansible using the official Datadog role.
+                tags = [
+                    f"device:{device}",
+                    f"model:{model.group(1).strip() if model else 'unknown'}",
+                    f"serial:{serial.group(1).strip() if serial else 'unknown'}"
+                ]
 
-Acceptance Criteria:
+                # Health Status
+                health = re.search(r"SMART overall-health self-assessment test result:\s+(\w+)", output)
+                self.gauge("smart.device.health", 1 if health and health.group(1) == "PASSED" else 0, tags)
 
-- [ ] Deploy custom ZFS check script to Datadog agent host(s) using Ansible and datadog.datadog role  
-- [ ] Monitor the following for ZFS pools and devices:  
-  - Pool state (ONLINE, DEGRADED, FAULTED, etc.)  
-  - Capacity metrics: allocated, free, total size  
-  - Device read and write errors  
-- [ ] Define Datadog service checks:  
-  - zfs.pool.health with statuses OK / WARNING / CRITICAL based on pool state  
-- [ ] Define Datadog metrics:  
-  - zfs.pool.size, zfs.pool.allocated, zfs.pool.free  
-  - zfs.device.read_errors, zfs.device.write_errors  
-  - zfs.pool.health.status_code (numeric mapping of pool state)  
-- [ ] Tag metrics and service checks with meaningful tags, e.g., pool:<poolname>, device:<devicename>, environment tags like env:prod  
-- [ ] Integrate Rasdaemon:  
-  - Install rasdaemon package  
-  - Enable and start the service  
-  - Collect rasdaemon logs under Datadog log collection with proper tagging  
-- [ ] Integrate Smart Disk Monitoring Daemon (smartd):  
-  - Install smartmontools package  
-  - Deploy smartd.conf config file  
-  - Enable and start smartd service  
-  - Collect smartd logs via Datadog log collection with proper tagging  
-- [ ] Use the official Datadog Ansible role (datadog.datadog) for agent installation and configuration  
-- [ ] Provide a fully working Ansible playbook with all tasks in a single file  
-- [ ] Validate collected metrics and service checks appear correctly in Datadog Metrics Explorer and Service Checks dashboard  
+                metrics = {
+                    "Reallocated_Sector_Ct": "smart.reallocated_sectors",
+                    "Current_Pending_Sector": "smart.pending_sectors",
+                    "Offline_Uncorrectable": "smart.offline_uncorrectable",
+                    "Temperature_Celsius": "smart.temperature"
+                }
 
-Monitoring Alerts (to configure in Datadog):
+                for line in output.splitlines():
+                    for attr, metric in metrics.items():
+                        if attr in line:
+                            fields = line.split()
+                            if len(fields) >= 10 and fields[0].isdigit():
+                                self.gauge(metric, float(fields[9]), tags)
 
-| Condition                                | Monitor Type      | Severity  |
-|------------------------------------------|-------------------|-----------|
-| Pool state != ONLINE                     | Service Check     | Critical  |
-| Pool usage exceeds 85%                   | Metric Threshold  | Warning   |
-| Device read/write errors > 0             | Metric Threshold  | Warning   |
-
-Example Ansible Playbook Structure:
-
-- Use this role in playbook:
-
----
-- hosts: all
-  roles:
-    - { role: datadog.datadog, become: true }
----
-
-- Include tasks to:  
-  - Install rasdaemon and smartmontools  
-  - Configure and start their services  
-  - Deploy custom ZFS Python check and YAML config  
-  - Deploy smartd.conf  
-  - Configure Datadog log collection for rasdaemon and smartd logs  
-  - Restart Datadog agent and smartd on config changes
-
-Files to Provide:  
-- zfs_check.py — custom Datadog check script for ZFS  
-- zfs_check.yaml — Datadog agent config for the custom check  
-- smartd.conf — sample smartd config for disk monitoring  
-
-Additional Notes:  
-- Use environment tags like env:prod for metrics  
-- Metrics and service checks must include tags for pools and devices  
-- Use meaningful service check statuses and metric values per ZFS state mapping  
-- The entire setup must be reproducible and deployable via a single Ansible playbook using the official Datadog role
-
-Let me know if you want me to provide the full Ansible playbook, scripts, and configs attached to this ticket.
-
-If you want, I can also draft monitor JSON definitions or Terraform manifests for Datadog monitors.
+            except subprocess.CalledProcessError:
+                self.log.warning(f"Device {device} not found or smartctl failed")
