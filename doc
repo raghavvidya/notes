@@ -1,47 +1,105 @@
-JIRA Ticket: Integrate Patroni Metrics with Datadog Monitoring
+ackground:
+Our infrastructure uses ZFS for storage, but currently, there is no integration with Datadog for monitoring ZFS pool health, device errors, or usage statistics. This lack of monitoring could lead to silent degradation or failures that go unnoticed.
 
-Background:
-Patroni manages PostgreSQL high availability within our infrastructure. Monitoring Patroni is essential to ensure database uptime, replication consistency, failover readiness, and operational health. Patroni exposes a `/metrics` endpoint in Prometheus format. To improve observability, we are ingesting these metrics into Datadog using container autodiscovery based on Docker labels, simplifying configuration and ensuring all relevant metrics are captured.
-
-Key Integration Features:
-- Automatically discover Patroni containers and scrape their Prometheus-formatted metrics using Docker label-based autodiscovery.
-- Monitor critical operational indicators including:
-  - Node roles (leader/replica)
-  - PostgreSQL running state
-  - WAL/XLOG metrics
-  - Failover and pause indicators
-- Enable real-time alerting for:
-  - PostgreSQL process down
-  - Patroni failover paused
-  - Required restart
-  - No active leader
-- Tag metrics by namespace and cluster for filtering and alerting.
-
-Configuration Requirements:
-- Ensure the Patroni metrics endpoint is exposed inside the container (e.g., http://localhost:8009/metrics).
-- The Datadog Agent must be running with Docker label autodiscovery enabled.
-- Add Docker labels to Patroni containers for automatic metric collection.
-- Use `openmetrics` endpoint autodiscovery with wildcard (.*) metric matching.
-- Apply appropriate tags (e.g., cluster) via labels to organize metrics in Datadog.
-
-Docker Label Configuration Example:
-com.datadoghq.ad.instances: >
-  [
-    {
-      "openmetrics_endpoint": "http://%%host%%:8009/metrics",
-      "namespace": "patroni",
-      "metrics": [".*"]
-    }
-  ]
-com.datadoghq.ad.check_names: ["openmetrics"]
-com.datadoghq.tags: ["cluster:batman"]
-
-Note:
-Replace port 8009 with the actual exposed Patroni metrics port if different.
+We want to set up a custom Datadog Agent check to monitor ZFS health, capacity, and error rates using a Python script. Additionally, incorporate hardware monitoring with Rasdaemon and disk health monitoring with Smart Disk Monitoring Daemon (smartd), all deployed and configured via Ansible using the official Datadog role.
 
 Acceptance Criteria:
-- [ ] Patroni metrics are successfully autodiscovered and ingested into Datadog via Docker labels.
-- [ ] Metrics are visible in Datadog Metrics Explorer with correct tagging (`namespace`, `cluster`, etc.).
-- [ ] Alerts are triggered for key conditions (e.g., Postgres down, no leader, pending restart).
-- [ ] Example label configuration is applied to all Patroni containers.
-- [ ] No manual config required on Datadog Agent for new Patroni containers.
+
+ Deploy custom ZFS check script to Datadog agent host(s) using Ansible and datadog.datadog role
+
+ Monitor the following for ZFS pools and devices:
+
+Pool state (ONLINE, DEGRADED, FAULTED, etc.)
+
+Capacity metrics: allocated, free, total size
+
+Device read and write errors
+
+ Define Datadog service checks:
+
+zfs.pool.health with statuses OK / WARNING / CRITICAL based on pool state
+
+ Define Datadog metrics:
+
+zfs.pool.size, zfs.pool.allocated, zfs.pool.free
+
+zfs.device.read_errors, zfs.device.write_errors
+
+zfs.pool.health.status_code (numeric mapping of pool state)
+
+ Tag metrics and service checks with meaningful tags, e.g., pool:<poolname>, device:<devicename>, environment tags like env:prod
+
+ Integrate Rasdaemon:
+
+Install rasdaemon package
+
+Enable and start the service
+
+Collect rasdaemon logs under Datadog log collection with proper tagging
+
+ Integrate Smart Disk Monitoring Daemon (smartd):
+
+Install smartmontools package
+
+Deploy smartd.conf config file
+
+Enable and start smartd service
+
+Collect smartd logs via Datadog log collection with proper tagging
+
+ Use the official Datadog Ansible role (datadog.datadog) for agent installation and configuration
+
+ Provide a fully working Ansible playbook with all tasks in a single file
+
+ Validate collected metrics and service checks appear correctly in Datadog Metrics Explorer and Service Checks dashboard
+
+Monitoring Alerts (to configure in Datadog):
+
+Condition	Monitor Type	Severity
+Pool state != ONLINE	Service Check	Critical
+Pool usage exceeds 85%	Metric Threshold	Warning
+Device read/write errors > 0	Metric Threshold	Warning
+
+Example Ansible Playbook Structure:
+
+Use this role in playbook:
+
+yaml
+Copy
+Edit
+---
+- hosts: all
+  roles:
+    - { role: datadog.datadog, become: true }
+Include tasks to:
+
+Install rasdaemon and smartmontools
+
+Configure and start their services
+
+Deploy custom ZFS Python check and YAML config
+
+Deploy smartd.conf
+
+Configure Datadog log collection for rasdaemon and smartd logs
+
+Restart Datadog agent and smartd on config changes
+
+Files to Provide:
+
+zfs_check.py — custom Datadog check script for ZFS
+
+zfs_check.yaml — Datadog agent config for the custom check
+
+smartd.conf — sample smartd config for disk monitoring
+
+Additional Notes:
+
+Use environment tags like env:prod for metrics
+
+Metrics and service checks must include tags for pools and devices
+
+Use meaningful service check statuses and metric values per ZFS state mapping
+
+The entire setup must be reproducible and deployable via a single Ansible playbook using the official Datadog role
+
