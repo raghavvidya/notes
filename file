@@ -14,7 +14,7 @@ class ZFSCheck(AgentCheck):
 
     def check(self, instance):
         try:
-            # Pool usage metrics
+            # --- Pool usage metrics ---
             zpool_list = subprocess.check_output(["/sbin/zpool", "list", "-Hp"]).decode("utf-8")
             for line in zpool_list.strip().split("\n"):
                 fields = line.split("\t")
@@ -27,9 +27,9 @@ class ZFSCheck(AgentCheck):
                 self.gauge("zfs.pool.allocated", alloc, tags=[f"pool:{pool}"])
                 self.gauge("zfs.pool.free", free, tags=[f"pool:{pool}"])
 
-            # Pool health and errors
+            # --- Pool health and device errors ---
             zpool_status = subprocess.check_output(["/sbin/zpool", "status"]).decode("utf-8")
-            pools = re.split(r'\n\n', zpool_status.strip())  # Split by double newlines
+            pools = re.split(r'\n\n', zpool_status.strip())
 
             for pool_section in pools:
                 match = re.search(r'pool:\s+(\S+)', pool_section)
@@ -37,7 +37,6 @@ class ZFSCheck(AgentCheck):
                     continue
                 pool_name = match.group(1)
 
-                # Pool state
                 state_match = re.search(r'state:\s+(\S+)', pool_section)
                 state = state_match.group(1) if state_match else "UNKNOWN"
                 state_value = self.STATE_MAP.get(state.upper(), 99)
@@ -50,11 +49,28 @@ class ZFSCheck(AgentCheck):
                 else:
                     self.service_check("zfs.pool.health", self.CRITICAL, tags=[f"pool:{pool_name}"])
 
-                # Device-level errors
                 device_lines = re.findall(r'\n\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', pool_section)
                 for device, state, read, write in device_lines:
                     self.gauge("zfs.device.read_errors", int(read), tags=[f"pool:{pool_name}", f"device:{device}"])
                     self.gauge("zfs.device.write_errors", int(write), tags=[f"pool:{pool_name}", f"device:{device}"])
+
+            # --- Filesystem metrics ---
+            zfs_get = subprocess.check_output(["/sbin/zfs", "get", "-Hp", "-o", "name,property,value", "all"]).decode("utf-8")
+            filesystem_metrics = [
+                "used", "available", "referenced", "compressratio", "quota", "reservation", "usedbysnapshots",
+                "usedbydataset", "usedbychildren", "usedbyrefreservation"
+            ]
+
+            for line in zfs_get.strip().split("\n"):
+                fs_name, prop, value = line.split("\t")
+                if prop in filesystem_metrics:
+                    try:
+                        # Try to cast to float if numeric
+                        metric_value = float(value)
+                        self.gauge(f"zfs.filesystem.{prop}", metric_value, tags=[f"filesystem:{fs_name}"])
+                    except ValueError:
+                        # Skip non-numeric values
+                        continue
 
         except Exception as e:
             self.service_check("zfs.pool.health", self.CRITICAL)
