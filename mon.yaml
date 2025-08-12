@@ -1,0 +1,31 @@
+---
+- name: Create or Update Multiple Datadog Dashboards from YAML files
+  hosts: localhost
+  gather_facts: false
+  vars:
+    datadog_api_url: "https://api.datadoghq.eu/api/v1/monitor"
+    datadog_api_key: "{{ lookup('env', 'DATADOG_API_KEY') }}"
+    datadog_app_key: "{{ lookup('env', 'DATADOG_APP_KEY') }}"
+    monitor_files_path: "../files/monitors"
+
+  tasks:
+    - name: Find all monitor YAML files
+      find:
+        paths: "{{ monitor_files_path }}"
+        patterns: "*.yaml"
+      register: monitor_files
+
+    - name: Load all monitor definitions from all files
+      set_fact:
+        monitor_defs: []
+
+    - name: Append monitors from each YAML file
+      set_fact:
+        monitor_defs: "{{ monitor_defs + (lookup('file', item.path) | from_yaml_all) }}"
+      loop: "{{ monitor_files.files }}"
+
+    - name: Process each monitor file
+      include_tasks: process_monitor.yml
+      loop: "{{ monitor_defs }}"
+      loop_control:
+        loop_var: monitor_def
