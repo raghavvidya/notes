@@ -1,0 +1,31 @@
+- name: Search for existing monitor by name
+  uri:
+    url: "{{ datadog_api_url }}?name={{ monitor_def.name | urlencode }}"
+    method: GET
+    headers:
+      DD-API-KEY: "{{ datadog_api_key }}"
+      DD-APPLICATION-KEY: "{{ datadog_app_key }}"
+      Content-Type: "application/json"
+    status_code: 200
+    return_content: yes
+  register: monitor_search
+
+- name: Create or update monitor
+  uri:
+    url: >-
+      {{
+        datadog_api_url if (monitor_search.json | length) == 0
+        else datadog_api_url + '/' + (monitor_search.json[0].id | string)
+      }}
+    method: >-
+      {{
+        'POST' if (monitor_search.json | length) == 0 else 'PUT'
+      }}
+    headers:
+      DD-API-KEY: "{{ datadog_api_key }}"
+      DD-APPLICATION-KEY: "{{ datadog_app_key }}"
+      Content-Type: "application/json"
+    body: "{{ monitor_def }}"
+    body_format: json
+    status_code: [200, 201]
+    return_content: yes
