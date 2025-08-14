@@ -1,77 +1,120 @@
-from datadog_checks.base import AgentCheck
-import subprocess
-import re
+---
+name: "LAB - Patroni Cluster No Primary"
+type: "metric alert"
+query: "max(last_5m):sum:patroni.patroni_primary{env:staging} by {host} < 1"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 1
+  notify_no_data: true
+  no_data_timeframe: 5
+  renotify_interval: 10
 
-class ZFSCheck(AgentCheck):
-    STATE_MAP = {
-        "ONLINE": 0,
-        "DEGRADED": 1,
-        "FAULTED": 2,
-        "OFFLINE": 3,
-        "REMOVED": 4,
-        "UNAVAIL": 5,
-    }
+---
+name: "LAB - Patroni Cluster Split-Brain"
+type: "metric alert"
+query: "max(last_5m):sum:patroni.patroni_primary{env:staging} by {host} > 1"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 1
+  notify_no_data: true
+  no_data_timeframe: 5
+  renotify_interval: 10
 
-    def check(self, instance):
-        try:
-            # --- Pool usage metrics ---
-            zpool_list = subprocess.check_output(["/sbin/zpool", "list", "-Hp"]).decode("utf-8")
-            for line in zpool_list.strip().split("\n"):
-                fields = line.split("\t")
-                pool = fields[0]
-                size = int(fields[1])
-                alloc = int(fields[2])
-                free = int(fields[3])
+---
+name: "LAB - Patroni Cluster Insufficient HA"
+type: "metric alert"
+query: "max(last_10m):sum:patroni.patroni_replica{env:staging} by {host} < 1"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 1
+  notify_no_data: true
+  no_data_timeframe: 10
+  renotify_interval: 30
 
-                self.gauge("zfs.pool.size", size, tags=[f"pool:{pool}"])
-                self.gauge("zfs.pool.allocated", alloc, tags=[f"pool:{pool}"])
-                self.gauge("zfs.pool.free", free, tags=[f"pool:{pool}"])
+---
+name: "LAB - Patroni Cluster Node Down"
+type: "metric alert"
+query: "max(last_5m):sum:patroni.patroni_postgres_running{env:staging} by {host,scope} < 1"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 1
+  notify_no_data: true
+  no_data_timeframe: 5
+  renotify_interval: 15
 
-            # --- Pool health and device errors ---
-            zpool_status = subprocess.check_output(["/sbin/zpool", "status"]).decode("utf-8")
-            pools = re.split(r'\n\n', zpool_status.strip())
+---
+name: "LAB - Patroni Cluster Auto-Failover Off"
+type: "metric alert"
+query: "max(last_10m):sum:patroni.patroni_cluster_unlocked{env:staging} by {host,scope} > 0"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 0
+  notify_no_data: true
+  no_data_timeframe: 5
+  renotify_interval: 15
 
-            for pool_section in pools:
-                match = re.search(r'pool:\s+(\S+)', pool_section)
-                if not match:
-                    continue
-                pool_name = match.group(1)
 
-                state_match = re.search(r'state:\s+(\S+)', pool_section)
-                state = state_match.group(1) if state_match else "UNKNOWN"
-                state_value = self.STATE_MAP.get(state.upper(), 99)
-                self.gauge("zfs.pool.health.status_code", state_value, tags=[f"pool:{pool_name}", f"state:{state}"])
+---
+name: "LAB - Patroni Cluster Paused"
+type: "metric alert"
+query: "max(last_10m):max:patroni.patroni_is_paused{env:staging} by {scope} > 0"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 0
+  notify_no_data: true
+  no_data_timeframe: 15
+  renotify_interval: 180
 
-                if state == "ONLINE":
-                    self.service_check("zfs.pool.health", self.OK, tags=[f"pool:{pool_name}"])
-                elif state == "DEGRADED":
-                    self.service_check("zfs.pool.health", self.WARNING, tags=[f"pool:{pool_name}"])
-                else:
-                    self.service_check("zfs.pool.health", self.CRITICAL, tags=[f"pool:{pool_name}"])
 
-                device_lines = re.findall(r'\n\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', pool_section)
-                for device, state, read, write in device_lines:
-                    self.gauge("zfs.device.read_errors", int(read), tags=[f"pool:{pool_name}", f"device:{device}"])
-                    self.gauge("zfs.device.write_errors", int(write), tags=[f"pool:{pool_name}", f"device:{device}"])
-
-            # --- Filesystem metrics ---
-            zfs_get = subprocess.check_output(["/sbin/zfs", "get", "-Hp", "-o", "name,property,value", "all"]).decode("utf-8")
-            filesystem_metrics = [
-                "used", "available", "referenced", "compressratio", "quota", "reservation", "usedbysnapshots",
-                "usedbydataset", "usedbychildren", "usedbyrefreservation"
-            ]
-
-            for line in zfs_get.strip().split("\n"):
-                fs_name, prop, value = line.split("\t")
-                if prop in filesystem_metrics:
-                    try:
-                        # Try to cast to float if numeric
-                        metric_value = float(value)
-                        self.gauge(f"zfs.filesystem.{prop}", metric_value, tags=[f"filesystem:{fs_name}"])
-                    except ValueError:
-                        # Skip non-numeric values
-                        continue
-
-        except Exception as e:
-            self.service_check("zfs.pool.health", self.CRITICAL)
-            self.log.error("ZFS check failed: {}".format(e))
+---
+name: "LAB - Patroni Node Failsafe"
+type: "metric alert"
+query: "max(last_5m):max:patroni.patroni_failsafe_mode_is_active{env:staging} by {scope} > 0"
+message: |
+  Please investigate immediately.
+tags:
+  - "env:staging"
+  - "service:patroni"
+  - "serverity:critical"
+options:
+  thresholds:
+    critical: 0
+  notify_no_data: false
+  no_data_timeframe: 10
+  renotify_interval: 20
