@@ -1,0 +1,22 @@
+---
+- name: Create or Update Multiple Datadog Dashboards from YAML files
+  hosts: localhost
+  gather_facts: false
+  vars:
+    datadog_api_url: "https://api.datadoghq.eu/api/v1/dashboard"
+    datadog_api_key: ""
+    datadog_app_key: ""
+    dashboard_files_path: "../files/dashboards"
+
+  tasks:
+    - name: Find all dashboard YAML files
+      find:
+        paths: "{{ dashboard_files_path }}"
+        patterns: "*.yml"
+      register: dashboard_files
+
+    - name: Process each dashboard file
+      include_tasks: dashboard_tasks.yml
+      loop: "{{ dashboard_files.files }}"
+      loop_control:
+        loop_var: dashboard_file
