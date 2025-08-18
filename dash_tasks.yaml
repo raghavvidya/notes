@@ -1,0 +1,83 @@
+# file: dashboard_tasks.yml
+- name: Load dashboard YAML file
+  include_vars:
+    file: "{{ dashboard_file.path }}"
+    name: dashboard_data
+
+- name: Debug dashboard title
+  debug:
+    msg: "Processing dashboard: {{ dashboard_data.title }}"
+
+- name: Find existing dashboards
+  uri:
+    url: "{{ datadog_api_url }}"
+    method: GET
+    headers:
+      DD-API-KEY: "{{ datadog_api_key }}"
+      DD-APPLICATION-KEY: "{{ datadog_app_key }}"
+    return_content: yes
+  register: existing_dashboards
+
+- name: Find dashboard slug by title if exists
+  set_fact:
+    existing_dashboard_slug: >-
+      {{
+        (existing_dashboards.json.dashboards
+         | selectattr('title', 'equalto', dashboard_data.title)
+         | map(attribute='id')
+         | list)
+        | first
+        | default(None)
+      }}
+
+- name: Get full dashboard details if existing slug found
+  when: existing_dashboard_slug is not none
+  uri:
+    url: "{{ datadog_api_url }}/{{ existing_dashboard_slug }}"
+    method: GET
+    headers:
+      DD-API-KEY: "{{ datadog_api_key }}"
+      DD-APPLICATION-KEY: "{{ datadog_app_key }}"
+    return_content: yes
+  register: full_dashboard
+
+- name: Set dashboard ID if dashboard found
+  set_fact:
+    dashboard_id: "{{ full_dashboard.json.id }}"
+  when:
+    - full_dashboard is defined
+    - full_dashboard.json is defined
+    - full_dashboard.json.id is defined
+
+- name: Build dashboard JSON body
+  set_fact:
+    dashboard_json_body:
+      dashboard:
+        title: "{{ dashboard_data.title }}"
+        description: "{{ dashboard_data.description | default('') }}"
+        layout_type: "{{ dashboard_data.layout_type | default('ordered') }}"
+        notify_list: "{{ dashboard_data.notify_list | default([]) }}"
+        template_variables: "{{ dashboard_data.template_variables | default([]) }}"
+        widgets: "{{ dashboard_data.widgets | default([]) }}"
+
+- name: Create or update Datadog dashboard
+  uri:
+    url: >-
+      {{
+        datadog_api_url if dashboard_id is not defined
+        else datadog_api_url + '/' + dashboard_id|string
+      }}
+    method: "{{ 'POST' if dashboard_id is not defined else 'PUT' }}"
+    headers:
+      DD-API-KEY: "{{ datadog_api_key }}"
+      DD-APPLICATION-KEY: "{{ datadog_app_key }}"
+      Content-Type: "application/json"
+    body: "{{ dashboard_json_body.dashboard }}"
+    body_format: json
+    status_code: [200, 201]
+    return_content: yes
+  register: dashboard_response
+
+- name: Show API response
+  debug:
+    var: dashboard_response.json
